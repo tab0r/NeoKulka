@@ -24,7 +24,7 @@ from random import randint
 # from keras.layers.core import Dense
 # from keras.optimizers import Adam
 
-def make_episode(p = 0, steps = 360):
+def make_episode(p = 0, steps = 10):
     # eventually allow agent to go off-screen. make it work with handicap first
     # max_r = 240):
     '''
@@ -34,22 +34,20 @@ def make_episode(p = 0, steps = 360):
     '''
     # once this works properly, this offset will make the sim better reflect the conditions I expect the DQN to encounter- specifically, in each "game", the Sphero will have a random zero heading, and that heading will change over time due to errors.
     # stochasticity 1: random position and zero direction initialization
-    pdb.set_trace()
     grid_size = (640, 480)
     pygame.init()
     screen = pygame.display.set_mode(grid_size)
     screen.fill((0, 0, 0))
-    pygame.display.update()
+    pygame.display.flip()
     offset = 0 # randint(0, 359)
     start_coords = random_coords()
     coords = start_coords
     log = []
     for i in range(steps):
-        # pdb.set_trace()
-        heading = i % 360 #randint(0, 359)
+        heading = randint(0, 359)
         # once the network is training well, I'll either make it bigger  to control speed, too, or train another network specifically for controlling speed.
         # speed = randint(0, 10) * 25
-        speed = 30
+        speed = 100
         # each iteration generates one frame for the frame stack.
         # for now hard coding to five, for similar reasoning as our grid size
         frame_count = 5
@@ -61,25 +59,26 @@ def make_episode(p = 0, steps = 360):
                 theta += (np.random.random - 1) * 30
             delta_x = (speed/frame_count) * np.sin(theta)
             delta_y = (speed/frame_count) * np.cos(theta)
-            new_coords = coords + np.array([delta_x, delta_y])
-            # coords = np.minimum(coords, grid_size)
-            # coords = np.maximum(coords, np.zeros(2))
+            new_coords = coords.astype(int) + np.array([delta_x, delta_y]).astype(int)
+            new_coords = np.minimum(new_coords, grid_size).astype(int)
+            new_coords = np.maximum(new_coords, np.zeros(2)).astype(int)
             frames.extend(new_coords)
-            x = int(new_coords[0])
-            y = int(new_coords[1])
+            x = new_coords[0]
+            y = new_coords[1]
             color = (0, 128, 255)
             # print(x, y)
-            pygame.draw.rect(screen, color, (x, y, 10, 10))
-            screen.fill((1,1,1))
-            pygame.display.update()
-            coords = (x, y)
+            # screen.fill((255,255,255))
+            pygame.draw.circle(screen, color, (x, y), 5)
+            pygame.display.flip()
+            coords = new_coords
             # time.sleep(0.1)
         values = [heading]
         values.extend(frames)
         values = np.array([values])
+        # values = values.astype(int)
         # values.flatten()
         print(values)
-        log.append(values.astype(int))
+        log.append(values)
     return log
 
 def random_coords(grid_size = (640, 480)):
