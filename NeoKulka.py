@@ -14,17 +14,42 @@ cmd outputs: 9 outputs,
 '''
 import time, os, sys, pickle, pygame, pdb
 import numpy as np
+from scipy.spatial.distance import euclidean as e_dist
 from os import listdir
 from os.path import isfile, join
 from random import randint
 
 # neural network imports
-# from keras.utils import np_utils
-# from keras.models import Sequential, load_model
-# from keras.layers.core import Dense
-# from keras.optimizers import Adam
+from keras.utils import np_utils
+from keras.models import Sequential, load_model
+from keras.layers.core import Dense
+from keras.optimizers import Adam
 
-def make_episode(p = 0, steps = 10):
+def random_coords(grid_size = (640, 480)):
+    return np.array([randint(0, grid_size[0]-1), randint(0, grid_size[1]-1)])
+
+def get_reward(coords, goal = (320, 240), tolerance = 240):
+    distance = e_dist(coords, goal)
+    reward = 1 - (distance/tolerance)
+    return reward
+
+def test_rewards():
+    grid_size = (640, 480)
+    pygame.init()
+    screen = pygame.display.set_mode(grid_size)
+    screen.fill((0, 0, 0))
+    pygame.display.flip()
+    for _ in range(100):
+        coords = random_coords()
+        x = coords[0]
+        y = coords[1]
+        print(coords, get_reward(coords))
+        color = (0, 128, 255)
+        pygame.draw.circle(screen, color, (x, y), 5)
+        pygame.display.flip()
+        time.sleep(0.1)
+
+def play_episode(p = 0, steps = 10, model = None):
     # eventually allow agent to go off-screen. make it work with handicap first
     # max_r = 240):
     '''
@@ -44,7 +69,7 @@ def make_episode(p = 0, steps = 10):
     coords = start_coords
     log = []
     for i in range(steps):
-        heading = randint(0, 359)
+        heading = (randint(0, 30) * 12) % 360
         # once the network is training well, I'll either make it bigger  to control speed, too, or train another network specifically for controlling speed.
         # speed = randint(0, 10) * 25
         speed = 100
@@ -52,6 +77,7 @@ def make_episode(p = 0, steps = 10):
         # for now hard coding to five, for similar reasoning as our grid size
         frame_count = 5
         frames = []
+        rewards = 0
         for _ in range(frame_count):
             theta = heading + offset
             if np.random.random() <= p:
@@ -62,6 +88,7 @@ def make_episode(p = 0, steps = 10):
             new_coords = coords.astype(int) + np.array([delta_x, delta_y]).astype(int)
             new_coords = np.minimum(new_coords, grid_size).astype(int)
             new_coords = np.maximum(new_coords, np.zeros(2)).astype(int)
+            rewards += (get_reward(new_coords))
             frames.extend(new_coords)
             x = new_coords[0]
             y = new_coords[1]
@@ -71,9 +98,10 @@ def make_episode(p = 0, steps = 10):
             pygame.draw.circle(screen, color, (x, y), 5)
             pygame.display.flip()
             coords = new_coords
-            # time.sleep(0.1)
+            time.sleep(0.1)
         values = [heading]
         values.extend(frames)
+        values.append(rewards/frame_count)
         values = np.array([values])
         # values = values.astype(int)
         # values.flatten()
@@ -81,12 +109,9 @@ def make_episode(p = 0, steps = 10):
         log.append(values)
     return log
 
-def random_coords(grid_size = (640, 480)):
-    return np.array([randint(0, grid_size[0]-1), randint(0, grid_size[1]-1)])
-
 def data_gen(p = 1, episodes = 1000, steps = 5):
     for _ in range(episodes):
-        make_episode(p, steps)
+        play_episode(p, steps)
 
 # def train_model(model, folder_path, limit = 10, limit_mode = "time"):
 #     '''
@@ -136,34 +161,35 @@ def data_gen(p = 1, episodes = 1000, steps = 5):
 #         print("Not yet implemented")
 #     return losses
 
-# def baseline_model(optimizer = Adam(), inputs = 11, outputs = 9,
-#                     layers = [{"size":50,"activation":"relu"}]):
-#     # two inputs - each coordinate
-#     num_inputs = inputs
-#     # four outputs - one for each potential offset
-#     num_outputs = outputs
-#     # prepare the navigator model
-#     model = Sequential()
-#     # initial inputs
-#     l = list(layers)
-#     l0 = l[0]
-#     del l[0]
-#     model.add(Dense(l0['size'],
-#                     input_dim = num_inputs,
-#                     activation = l0['activation']))
-#     # the hidden layers
-#     for layer in l:
-#         model.add(Dense(layer['size'], activation=layer['activation']))
-#     # the output layer
-#     model.add(Dense(num_outputs, activation='tanh'))
-#     model.compile(optimizer = optimizer,
-#                     loss = "mean_squared_error")
-#     return model
+def baseline_model(optimizer = Adam(), inputs = 11, outputs = 30,
+                    layers = [{"size":20,"activation":"relu"}]):
+    # two inputs - each coordinate
+    num_inputs = inputs
+    # four outputs - one for each potential offset
+    num_outputs = outputs
+    # prepare the navigator model
+    model = Sequential()
+    # initial inputs
+    l = list(layers)
+    l0 = l[0]
+    del l[0]
+    model.add(Dense(l0['size'],
+                    input_dim = num_inputs,
+                    activation = l0['activation']))
+    # the hidden layers
+    for layer in l:
+        model.add(Dense(layer['size'], activation=layer['activation']))
+    # the output layer
+    model.add(Dense(num_outputs, activation='tanh'))
+    model.compile(optimizer = optimizer,
+                    loss = "mean_squared_error")
+    return model
 
 if __name__ == "__main__":
-    # model = baseline_model()
+    model = baseline_model()
     # model.load_weights("sphero_model.h5")
     # replay_log = train_model(model = model, folder_path = None, limit = 10)
     # model.save("sphero_model.h5")
     # pickle.dump(open("replay_log.p", "wb"))
-    log = make_episode()
+    # test_rewards()
+    log = play_episode(model = model)
