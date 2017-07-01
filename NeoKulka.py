@@ -49,15 +49,12 @@ def test_rewards():
         pygame.display.flip()
         time.sleep(0.1)
 
-def play_episode(p = 0.1, steps = 10, model = None):
-    # eventually allow agent to go off-screen. make it work with handicap first
-    # max_r = 240):
+def play_episode(p = 0.1, epsilon = 0.5, steps = 10, model = None):
     '''
     generate new training episode
     completely random choices, for now
     p is a control parameter for stochasticity
     '''
-    # once this works properly, this offset will make the sim better reflect the conditions I expect the DQN to encounter- specifically, in each "game", the Sphero will have a random zero heading, and that heading will change over time due to errors.
     # stochasticity 1: random position and zero direction initialization
     grid_size = (640, 480)
     pygame.init()
@@ -80,8 +77,9 @@ def play_episode(p = 0.1, steps = 10, model = None):
     for i in range(steps):
         if model != None:
             predicts = model.predict(last_step)
+            print("Q- predictions: ", predicts)
             choice = np.argmax(predicts)
-        elif (model == None) or (np.random.random() < 0.3):
+        if (model == None) or (np.random.random() < epsilon):
             choice = randint(0, 3)
         heading = (choice * 90)
         # once the network is training well, I'll either make it bigger  to control speed, too, or train another network specifically for controlling speed.
@@ -104,37 +102,75 @@ def play_episode(p = 0.1, steps = 10, model = None):
             new_coords = coords.astype(int) + np.array([delta_x, delta_y]).astype(int)
             new_coords = np.minimum(new_coords, grid_size).astype(int)
             new_coords = np.maximum(new_coords, np.zeros(2)).astype(int)
-            rewards += (get_reward(new_coords))
+            point_reward = get_reward(new_coords)
+            rewards += (point_reward)
             frames.extend(new_coords)
             x = new_coords[0]
             y = new_coords[1]
-            color = (255, 255, 255)
+            if point_reward < 0:
+                r = np.min([int(np.abs(point_reward) * 255), 255])
+                g = 0
+                b = 0
+            else:
+                r = 0
+                g = int(np.abs(point_reward) * 255)
+                b = 0
+            color = (r, g, b)
             # print(x, y)
             # screen.fill((255,255,255))
             pygame.draw.circle(screen, color, (x, y), 5)
             pygame.display.flip()
             coords = new_coords
-            time.sleep(0.1)
+            time.sleep(0.001)
         values = [heading]
         values.extend(frames)
         values = np.array([values]).reshape(1, 11)
         step_reward = rewards/frame_count
-        print(values, step_reward)
-        log.append(values)
+        entry = [last_step, choice, values, step_reward]
+        # print(entry)
         if model != None:
             # we now have <s, a, r> and perform the update
             target = predicts
             new_predicts = model.predict(values)
             target[0][choice] = step_reward + new_predicts[0][choice]
+            print("Q-value update: ", target)
+            # print("Next step predicts: ", new_predicts)
             model.train_on_batch(last_step, target)
         last_step = values
+        log.append(entry)
     return log
+
+def experience_replay(model, log):
+    loss = 0
+    print("Ready to experience replay on log of length: ", len(log))
+    for _ in range(len(log)):
+        idx = randint(0, len(log) - 1)
+        experience = log[idx]
+        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+        print("Replaying index: ", idx)
+        print("State: ", experience[0])
+        print("Action: ", experience[1])
+        print("Transition: ", experience[2])
+        print("Reward: ", experience[3])
+        # we now have <s, a, r> and perform the update
+        last_step = experience[0]
+        target = model.predict(experience[0])
+        new_predicts = model.predict(experience[2])
+        choice = experience[1]
+        step_reward = experience[3]
+        target[0][choice] = step_reward + new_predicts[0][choice]
+        print("Q-value update: ", target)
+        # print("Next step predicts: ", new_predicts)
+        loss += model.train_on_batch(last_step, target)
+        # print("Q- predictions: ", target)
+        print("Q-value update: ", target)
+    return loss
 
 def data_gen(p = 1, episodes = 1000, steps = 5):
     for _ in range(episodes):
         play_episode(p, steps)
 
-def train_model(model, folder_path, limit = 10, limit_mode = "time"):
+def train_on_archives(model, folder_path, limit = 10, limit_mode = "time"):
     '''
     train the model on data in folder_path
     assumes files are episodes of training
@@ -215,3 +251,6 @@ if __name__ == "__main__":
     # pickle.dump(open("replay_log.p", "wb"))
     # test_rewards()
     log = play_episode(model = model)
+    replay_loss = experience_replay(model, log)
+    print("Replay loss: ", replay_loss)
+
