@@ -49,7 +49,7 @@ def test_rewards():
         pygame.display.flip()
         time.sleep(0.1)
 
-def play_episode(p = 0, steps = 10, model = None):
+def play_episode(p = 0.1, steps = 10, model = None):
     # eventually allow agent to go off-screen. make it work with handicap first
     # max_r = 240):
     '''
@@ -64,25 +64,41 @@ def play_episode(p = 0, steps = 10, model = None):
     screen = pygame.display.set_mode(grid_size)
     screen.fill((0, 0, 0))
     pygame.display.flip()
-    offset = 0 # randint(0, 359)
+    offset = randint(0, 359)
+    print("Game offset: ", offset)
     start_coords = random_coords()
     coords = start_coords
+    # set up initial observation
+    frame_count = 5
+    last_step = [9]
+    for _ in range(frame_count):
+        last_step.extend(start_coords)
+    last_step = np.array(last_step).reshape(1, 11)
+    # prepare log
     log = []
+    # start playing
     for i in range(steps):
-        heading = (randint(0, 30) * 12) % 360
+        if model != None:
+            predicts = model.predict(last_step)
+            choice = np.argmax(predicts)
+        elif (model == None) or (np.random.random() < 0.3):
+            choice = randint(0, 3)
+        heading = (choice * 90)
         # once the network is training well, I'll either make it bigger  to control speed, too, or train another network specifically for controlling speed.
         # speed = randint(0, 10) * 25
-        speed = 100
+        if choice != 4:
+            speed = 100
+        else:
+            speed = 0
         # each iteration generates one frame for the frame stack.
         # for now hard coding to five, for similar reasoning as our grid size
-        frame_count = 5
         frames = []
         rewards = 0
         for _ in range(frame_count):
-            theta = heading + offset
+            theta = (heading + offset) * np.pi/180
             if np.random.random() <= p:
                 # stochasticity of sim 2: random variation of direction
-                theta += (np.random.random - 1) * 30
+                theta += (np.random.random() - 1) * np.pi/5
             delta_x = (speed/frame_count) * np.sin(theta)
             delta_y = (speed/frame_count) * np.cos(theta)
             new_coords = coords.astype(int) + np.array([delta_x, delta_y]).astype(int)
@@ -92,7 +108,7 @@ def play_episode(p = 0, steps = 10, model = None):
             frames.extend(new_coords)
             x = new_coords[0]
             y = new_coords[1]
-            color = (0, 128, 255)
+            color = (255, 255, 255)
             # print(x, y)
             # screen.fill((255,255,255))
             pygame.draw.circle(screen, color, (x, y), 5)
@@ -101,67 +117,72 @@ def play_episode(p = 0, steps = 10, model = None):
             time.sleep(0.1)
         values = [heading]
         values.extend(frames)
-        values.append(rewards/frame_count)
-        values = np.array([values])
-        # values = values.astype(int)
-        # values.flatten()
-        print(values)
+        values = np.array([values]).reshape(1, 11)
+        step_reward = rewards/frame_count
+        print(values, step_reward)
         log.append(values)
+        if model != None:
+            # we now have <s, a, r> and perform the update
+            target = predicts
+            new_predicts = model.predict(values)
+            target[0][choice] = step_reward + new_predicts[0][choice]
+            model.train_on_batch(last_step, target)
+        last_step = values
     return log
 
 def data_gen(p = 1, episodes = 1000, steps = 5):
     for _ in range(episodes):
         play_episode(p, steps)
 
-# def train_model(model, folder_path, limit = 10, limit_mode = "time"):
-#     '''
-#     train the model on data in folder_path
-#     assumes files are episodes of training
-#     randomly selects until limit reached
-#     by default, limits training time to ten minutes
-#     '''
-#     losses = []
-#     if limit_mode == "time":
-#         t0 = time.time()
-#         t1 = time.time()
-#         t_str = "Training for " + str(limit) + " minutes."
-#         step_count = 0
-#         count = 0
-#         print(t_str)
-#         while((t1 - t0) < (limit * 60)):
-#             count += 1
-#             # print("t1-t0:", t1-t0)
-#             if folder_path == None:
-#                 mypath = "episodes/"
-#             else:
-#                 mypath = folder_path
-#             filenames = [join(mypath, f) for f in listdir(mypath) if isfile(join(mypath, f))]
-#             choice = filenames[randint(0, len(filenames) - 1)]
-#             if choice == "episodes/.DS_Store":
-#                 pass
-#             else:
-#                 print("Filename: ", choice)
-#                 output = pickle.load(open(choice, "rb"))
-#                 step_count += len(output[0])
-#                 print("input sample: ", output[0][0])
-#                 print("target sample: ", output[1][0])
-#                 if model != None:
-#                     replay_loss = model.train_on_batch(output[0], output[1])
-#                     losses.append(replay_loss)
-#                     model_filestr = "offline_training_backup.h5"
-#                     model.save(model_filestr)
-#                     print("loss on replay training: ", replay_loss)
-#                 # time.sleep(1)
-#                 t1 = time.time()
-#         end_str = "Complete. Saw " + str(step_count) + " steps in " + str(count) \
-#                     + " episodes."
-#         print(end_str)
-#         print("Execution time: ", t1-t0)
-#     else:
-#         print("Not yet implemented")
-#     return losses
+def train_model(model, folder_path, limit = 10, limit_mode = "time"):
+    '''
+    train the model on data in folder_path
+    assumes files are episodes of training
+    randomly selects until limit reached
+    by default, limits training time to ten minutes
+    '''
+    losses = []
+    if limit_mode == "time":
+        t0 = time.time()
+        t1 = time.time()
+        t_str = "Training for " + str(limit) + " minutes."
+        step_count = 0
+        count = 0
+        print(t_str)
+        while((t1 - t0) < (limit * 60)):
+            count += 1
+            # print("t1-t0:", t1-t0)
+            if folder_path == None:
+                mypath = "episodes/"
+            else:
+                mypath = folder_path
+            filenames = [join(mypath, f) for f in listdir(mypath) if isfile(join(mypath, f))]
+            choice = filenames[randint(0, len(filenames) - 1)]
+            if choice == "episodes/.DS_Store":
+                pass
+            else:
+                print("Filename: ", choice)
+                output = pickle.load(open(choice, "rb"))
+                step_count += len(output[0])
+                print("input sample: ", output[0][0])
+                print("target sample: ", output[1][0])
+                if model != None:
+                    replay_loss = model.train_on_batch(output[0], output[1])
+                    losses.append(replay_loss)
+                    model_filestr = "offline_training_backup.h5"
+                    model.save(model_filestr)
+                    print("loss on replay training: ", replay_loss)
+                # time.sleep(1)
+                t1 = time.time()
+        end_str = "Complete. Saw " + str(step_count) + " steps in " + str(count) \
+                    + " episodes."
+        print(end_str)
+        print("Execution time: ", t1-t0)
+    else:
+        print("Not yet implemented")
+    return losses
 
-def baseline_model(optimizer = Adam(), inputs = 11, outputs = 30,
+def baseline_model(optimizer = Adam(), inputs = 11, outputs = 5,
                     layers = [{"size":20,"activation":"relu"}]):
     # two inputs - each coordinate
     num_inputs = inputs
@@ -187,6 +208,7 @@ def baseline_model(optimizer = Adam(), inputs = 11, outputs = 30,
 
 if __name__ == "__main__":
     model = baseline_model()
+    # model = None
     # model.load_weights("sphero_model.h5")
     # replay_log = train_model(model = model, folder_path = None, limit = 10)
     # model.save("sphero_model.h5")
