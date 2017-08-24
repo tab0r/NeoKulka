@@ -28,7 +28,7 @@ from keras.optimizers import Adam
 def random_coords(grid_size = (640, 480)):
     return np.array([randint(0, grid_size[0]-1), randint(0, grid_size[1]-1)])
 
-def get_reward(coords, goal = (320, 240), tolerance = 240):
+def get_reward(coords, goal = (320, 240), tolerance = 120):
     distance = e_dist(coords, goal)
     reward = 1 - (distance/tolerance)
     return reward
@@ -61,7 +61,8 @@ def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01):
     screen = pygame.display.set_mode(grid_size)
     screen.fill((200, 200, 255))
     pygame.display.flip()
-    offset = randint(0, 359)
+    # current disabled until we can confirm, measure, and optimize learning
+    offset = 0 #randint(0, 359)
     print("Game offset: ", offset)
     start_coords = random_coords()
     coords = start_coords
@@ -242,7 +243,7 @@ def baseline_model(optimizer = Adam(), inputs = 11, outputs = 5,
     for layer in l:
         model.add(Dense(layer['size'], activation=layer['activation']))
     # the output layer
-    model.add(Dense(num_outputs, activation='tanh'))
+    model.add(Dense(num_outputs, activation='linear'))
     model.compile(optimizer = optimizer,
                     loss = "mean_squared_error")
     return model
@@ -254,9 +255,17 @@ if __name__ == "__main__":
     # replay_log = train_model(model = model, folder_path = None, limit = 10)
     # pickle.dump(open("replay_log.p", "wb"))
     # test_rewards()
-    # log = play_episode(model = model, steps = 5)
-    # replay_loss = experience_replay(model, log)
-    # print("Replay loss: ", replay_loss)
-    train_on_archives(model, limit = 1.66)
-    model.save("neokulka_model.h5")
+    done = "n"
+    while done == "n":
+        episodes = int(input("How many training episodes?\n"))
+        steps = int(input("How many training steps per episode?\n"))
+        for _ in range(episodes):
+            log = play_episode(model = model, steps = steps)
+            replay_loss = experience_replay(model, log)
+            print("Replay loss: ", replay_loss)
+        # print("Replay loss: ", replay_loss)
+        # train_on_archives(model, limit = 1.66)
+        model.save("neokulka_model.h5")
+        done = input("Done? (y/n)\n")
+    print("Training complete")
 
