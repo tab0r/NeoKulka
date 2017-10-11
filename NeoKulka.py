@@ -7,10 +7,9 @@ grid size: (640, 480)
     -actual position allowed a radius r from initial point
     -actual position can be outside the grid
 data inputs: 5 coordinate pairs plus the command that generated them
-cmd outputs: 9 outputs,
-    -8 for stay
-    -0-3 for low speed at 90 degree angles
-    -4-7 for high speed at 90 degree angles
+cmd outputs: 4 outputs,
+    -0/1 for increase/decrease speed (mod 50 for now- only use lower range of speeds)
+    -2/3 for increase/decrease heading (increments of 30 deg for quicker turns)
 '''
 import time, os, sys, pickle, pygame, pdb
 import numpy as np
@@ -28,9 +27,17 @@ from keras.optimizers import Adam
 def random_coords(grid_size = (640, 480)):
     return np.array([randint(0, grid_size[0]-1), randint(0, grid_size[1]-1)])
 
-def get_reward(coords, goal = (320, 240), tolerance = 120):
+def get_reward(coords, goal = (320, 240), tolerance = 120, mode = 'binary'):
     distance = e_dist(coords, goal)
-    reward = 1 - (distance/tolerance)
+    if mode == 'binary':
+        if distance < tolerance:
+            reward = 1
+        else:
+            reward = 0
+    elif mode == 'linear':
+        reward = 1 - (distance/tolerance)
+    else:
+        print("Not yet implemented")
     return reward
 
 def test_rewards():
@@ -43,13 +50,27 @@ def test_rewards():
         coords = random_coords()
         x = coords[0]
         y = coords[1]
-        print(coords, get_reward(coords))
-        color = (0, 128, 255)
+        point_reward = get_reward(coords)
+        print(coords, point_reward)
+        if point_reward < 0:
+            r = np.min([int(np.abs(point_reward) * 255), 255])
+            g = 0
+            b = 0
+        elif point_reward > 0:
+            r = 0
+            g = int(np.abs(point_reward) * 255)
+            b = 0
+        else:
+            r = 0
+            g = 0
+            b = 255
+        color = (r, g, b)
         pygame.draw.circle(screen, color, (x, y), 5)
+        pygame.event.get()
         pygame.display.flip()
         time.sleep(0.1)
 
-def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01):
+def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01, frame_count = 5, offset = 0, reward_mode="binary", alpha = 0.05, show = True):
     '''
     generate new training episode
     completely random choices, for now
@@ -57,38 +78,42 @@ def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01):
     '''
     # stochasticity 1: random position and zero direction initialization
     grid_size = (640, 480)
-    pygame.init()
-    screen = pygame.display.set_mode(grid_size)
-    screen.fill((200, 200, 255))
-    pygame.display.flip()
-    # current disabled until we can confirm, measure, and optimize learning
-    offset = 0 #randint(0, 359)
+    if show == True:
+        pygame.init()
+        screen = pygame.display.set_mode(grid_size)
+        screen.fill((200, 200, 255))
+        pygame.display.flip()
     print("Game offset: ", offset)
     start_coords = random_coords()
     coords = start_coords
     # set up initial observation
-    frame_count = 5
-    last_step = [9]
+    heading = 0
+    speed = 0
+    last_step = [0]
     for _ in range(frame_count):
         last_step.extend(start_coords)
     last_step = np.array(last_step).reshape(1, 11)
+    step_reward = get_reward(start_coords, mode=reward_mode)
     # prepare log
     log = []
     # start playing
     for i in range(steps):
+        print("Last reward: ", step_reward)
         if model != None:
             predicts = model.predict(last_step)
-            print("Q- predictions: ", predicts)
+            print("Q- predictions: ", predicts[0])
             choice = np.argmax(predicts)
         if (model == None) or (np.random.random() < epsilon):
             choice = randint(0, 3)
         heading = (choice * 90)
-        # once the network is training well, I'll either make it bigger  to control speed, too, or train another network specifically for controlling speed.
-        # speed = randint(0, 10) * 25
-        if choice != 4:
-            speed = 100
-        else:
-            speed = 0
+        if choice == 0:
+            speed += 10 % 50
+        elif choice == 1:
+            speed -= 10 % 50
+        elif choice == 2:
+            heading += 30 % 360
+        elif choice == 3:
+            heading -= 30 % 360
         # each iteration generates one frame for the frame stack.
         # for now hard coding to five, for similar reasoning as our grid size
         frames = []
@@ -103,7 +128,8 @@ def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01):
             new_coords = coords.astype(int) + np.array([delta_x, delta_y]).astype(int)
             new_coords = np.minimum(new_coords, grid_size).astype(int)
             new_coords = np.maximum(new_coords, np.zeros(2)).astype(int)
-            point_reward = get_reward(new_coords)
+            point_reward = get_reward(new_coords, mode=reward_mode)
+            # print("Current reward: ", point_reward)
             rewards += (point_reward)
             frames.extend(new_coords)
             x = new_coords[0]
@@ -112,31 +138,43 @@ def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01):
                 r = np.min([int(np.abs(point_reward) * 255), 255])
                 g = 0
                 b = 0
-            else:
+            elif point_reward > 0:
                 r = 0
                 g = int(np.abs(point_reward) * 255)
                 b = 0
+            else:
+                r = 0
+                g = 0
+                b = 255
             color = (r, g, b)
             # print(x, y)
             # screen.fill((255,255,255))
-            pygame.draw.circle(screen, color, (x, y), 5)
-            pygame.display.flip()
+            if show == True:
+                pygame.draw.circle(screen, color, (x, y), 5)
+                pygame.display.flip()
+                pygame.event.get()
             coords = new_coords
             time.sleep(step_pause)
-        values = [heading]
+        values = [choice]
         values.extend(frames)
         values = np.array([values]).reshape(1, 11)
         step_reward = rewards/frame_count
         entry = [last_step, choice, values, step_reward]
+        if show == False:
+            print("Previous experience: ", last_step)
+            print("Choice: ", choice)
+            print("Transition: ", values)
+            print("Reward: ", step_reward)
         # print(entry)
         if model != None:
             # we now have <s, a, r> and perform the update
             target = predicts
             new_predicts = model.predict(values)
-            target[0][choice] = step_reward + new_predicts[0][choice]
-            print("Q-value update: ", target)
+            target[0][choice] = step_reward + alpha * new_predicts[0][choice]
+            print("Q-value update: ", target[0])
             # print("Next step predicts: ", new_predicts)
-            model.train_on_batch(last_step, target)
+            exp_loss = model.train_on_batch(last_step, target)
+            print("Update Loss: ", exp_loss)
         last_step = values
         log.append(entry)
     i = 0
@@ -147,26 +185,27 @@ def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01):
     pickle.dump(log, open(filestr, "wb"))
     return log
 
-def experience_replay(model, log):
+def experience_replay(model, log, alpha = 0.1):
     loss = 0
     print("Ready to experience replay on log of length: ", len(log))
-    for _ in range(len(log)):
-        idx = randint(0, len(log) - 1)
+    for idx in range(len(log)):
+        # idx = randint(0, len(log) - 1)
         experience = log[idx]
         print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         print("Replaying index: ", idx)
-        print("State: ", experience[0])
-        print("Action: ", experience[1])
-        print("Transition: ", experience[2])
-        print("Reward: ", experience[3])
+        print("S : ", experience[0])
+        print("A : ", experience[1])
+        print("S': ", experience[2])
+        print("R : ", experience[3])
         # we now have <s, a, r> and perform the update
         last_step = experience[0]
         target = model.predict(experience[0])
+        print("Q-values: ", target)
         new_predicts = model.predict(experience[2])
         choice = experience[1]
         step_reward = experience[3]
-        target[0][choice] = step_reward + new_predicts[0][choice]
-        print("Q-value update: ", target)
+        target[0][choice] = step_reward + alpha * new_predicts[0][choice]
+        print("Q update: ", target)
         exp_loss = model.train_on_batch(last_step, target)
         loss += exp_loss
         print("Update Loss: ", exp_loss)
@@ -224,11 +263,9 @@ def train_on_archives(model, folder_path=None, limit = 2, limit_mode = "time"):
         print("Not yet implemented")
     return losses
 
-def baseline_model(optimizer = Adam(), inputs = 11, outputs = 5,
-                    layers = [{"size":20,"activation":"relu"}]):
-    # two inputs - each coordinate
+def baseline_model(optimizer = Adam(), inputs = 11, outputs = 4,
+                    layers = [{"size":20,"activation":"tanh"}]):
     num_inputs = inputs
-    # four outputs - one for each potential offset
     num_outputs = outputs
     # prepare the navigator model
     model = Sequential()
@@ -249,9 +286,11 @@ def baseline_model(optimizer = Adam(), inputs = 11, outputs = 5,
     return model
 
 if __name__ == "__main__":
-    model = baseline_model()
+    layers = [{"size":10,"activation":"tanh"},
+              {"size":10,"activation":"tanh"},]
+    model = baseline_model(layers = layers)
     # model = None
-    model.load_weights("neokulka_model.h5")
+    # model.load_weights("neokulka_model.h5")
     # replay_log = train_model(model = model, folder_path = None, limit = 10)
     # pickle.dump(open("replay_log.p", "wb"))
     # test_rewards()
@@ -259,13 +298,28 @@ if __name__ == "__main__":
     while done == "n":
         episodes = int(input("How many training episodes?\n"))
         steps = int(input("How many training steps per episode?\n"))
-        for _ in range(episodes):
-            log = play_episode(model = model, steps = steps)
-            replay_loss = experience_replay(model, log)
+        epsilon_start = min(float(input("Epsilong starting point?\n")), 1)
+        show = ("y" == input("Display Training?\n"))
+        epsilon_end = epsilon_start/2
+        epsilon_delta = (epsilon_start - epsilon_end)/episodes
+        logs = []
+        for i in range(episodes):
+            e = epsilon_start - i*epsilon_delta
+            log = play_episode(model = model,
+                                steps = steps,
+                                epsilon = e,
+                                reward_mode = 'linear',
+                                show = show)
+            logs.append(log)
+            if len(logs) == 1:
+                r_idx = 0
+            else:
+                r_idx = randint(0, max(len(logs)-1, 1))
+            print("Replaying episode ", r_idx)
+            r_log = logs[r_idx]
+            replay_loss = experience_replay(model, r_log)
             print("Replay loss: ", replay_loss)
-        # print("Replay loss: ", replay_loss)
         # train_on_archives(model, limit = 1.66)
         model.save("neokulka_model.h5")
         done = input("Done? (y/n)\n")
     print("Training complete")
-
