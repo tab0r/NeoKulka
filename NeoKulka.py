@@ -70,7 +70,9 @@ def test_rewards():
         pygame.display.flip()
         time.sleep(0.1)
 
-def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01, frame_count = 5, offset = 0, reward_mode="binary", alpha = 0.05, show = True):
+def play_episode(p=0.1, epsilon=0.5, steps=10, model=None,
+                    step_pause = 0.01, frame_count = 5, offset = 0,
+                    reward_mode="binary", alpha = 0.9, show = True):
     '''
     generate new training episode
     completely random choices, for now
@@ -107,13 +109,15 @@ def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01, fr
             choice = randint(0, 3)
         heading = (choice * 90)
         if choice == 0:
-            speed += 10 % 50
+            speed += 10
+            speed = min(speed, 50)
         elif choice == 1:
-            speed -= 10 % 50
+            speed -= 10
+            speend = max(speed, 0)
         elif choice == 2:
-            heading += 30 % 360
+            heading += 60 % 360
         elif choice == 3:
-            heading -= 30 % 360
+            heading -= 60 % 360
         # each iteration generates one frame for the frame stack.
         # for now hard coding to five, for similar reasoning as our grid size
         frames = []
@@ -185,7 +189,7 @@ def play_episode(p=0.1, epsilon=0.5, steps=10, model=None, step_pause = 0.01, fr
     pickle.dump(log, open(filestr, "wb"))
     return log
 
-def experience_replay(model, log, alpha = 0.1):
+def experience_replay(model, log, alpha = 0.9):
     loss = 0
     print("Ready to experience replay on log of length: ", len(log))
     for idx in range(len(log)):
@@ -215,7 +219,8 @@ def data_gen(p = 1, episodes = 1000, steps = 5):
     for _ in range(episodes):
         play_episode(p, steps)
 
-def train_on_archives(model, folder_path=None, limit = 2, limit_mode = "time"):
+def train_on_archives(model, folder_path=None,
+                        limit = 2, limit_mode = "time"):
     '''
     train the model on data in folder_path
     assumes files are episodes of training
@@ -298,8 +303,9 @@ if __name__ == "__main__":
     while done == "n":
         episodes = int(input("How many training episodes?\n"))
         steps = int(input("How many training steps per episode?\n"))
-        epsilon_start = min(float(input("Epsilong starting point?\n")), 1)
+        epsilon_start = min(float(input("Epsilon starting point?\n")), 1)
         show = ("y" == input("Display Training?\n"))
+        step_pause = float(input("Frame time?\n"))
         epsilon_end = epsilon_start/2
         epsilon_delta = (epsilon_start - epsilon_end)/episodes
         logs = []
@@ -308,8 +314,9 @@ if __name__ == "__main__":
             log = play_episode(model = model,
                                 steps = steps,
                                 epsilon = e,
-                                reward_mode = 'linear',
-                                show = show)
+                                reward_mode = 'binary',
+                                show = show,
+                                step_pause = step_pause)
             logs.append(log)
             if len(logs) == 1:
                 r_idx = 0
